@@ -1,0 +1,1267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Neon Ink - Cyberpunk Physics Arcade</title>
+    <meta name="description" content="Draw glowing neon platforms to guide your cyber sphere through deadly obstacles and collect energy orbs in Neon Ink." />
+    <meta property="og:title" content="Neon Ink - Cyberpunk Physics Arcade" />
+    <meta property="og:description" content="Draw glowing neon platforms to guide your cyber sphere through deadly obstacles and collect energy orbs." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      html, body {
+        width: 100%;
+        height: 100%;
+        background-color: #0b0c10;
+        overflow: hidden;
+        font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Courier New', monospace;
+        color: #ffffff;
+      }
+      #canvas-wrapper {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: #0b0c10;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+      }
+      /* Top HUD controls */
+      #top-ui {
+        position: absolute;
+        top: 16px;
+        right: 20px;
+        display: flex;
+        gap: 12px;
+        z-index: 20;
+      }
+      .hud-btn {
+        background: rgba(11, 12, 16, 0.7);
+        border: 1px solid #ff007f;
+        color: #ff007f;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 13px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        padding: 6px 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        text-transform: uppercase;
+        box-shadow: 0 0 10px rgba(255, 0, 127, 0.3);
+        transition: all 0.2s ease;
+      }
+      .hud-btn:hover {
+        background: #ff007f;
+        color: #0b0c10;
+        box-shadow: 0 0 20px #ff007f;
+      }
+      /* Bottom instruction tooltip */
+      #hint-bar {
+        position: absolute;
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 13px;
+        letter-spacing: 2px;
+        color: rgba(0, 240, 255, 0.75);
+        text-transform: uppercase;
+        text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+        pointer-events: none;
+        z-index: 10;
+        text-align: center;
+        white-space: nowrap;
+      }
+      /* CRT scanline overlay */
+      .scanlines {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        background: linear-gradient(
+          rgba(18, 16, 26, 0) 50%, 
+          rgba(0, 0, 0, 0.25) 50%
+        );
+        background-size: 100% 4px;
+        z-index: 5;
+        opacity: 0.65;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="canvas-wrapper">
+      <canvas id="gameCanvas"></canvas>
+      <div class="scanlines"></div>
+
+      <div id="top-ui">
+        <button id="soundBtn" class="hud-btn" title="Toggle Sound">AUDIO: ON</button>
+        <button id="pauseBtn" class="hud-btn" title="Pause Game">PAUSE</button>
+      </div>
+
+      <div id="hint-bar">
+        CLICK &amp; DRAG TO DRAW NEON RAMPS &bull; BOUNCE TO SURVIVE &bull; FRAGILE INK
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+
+        // ==========================================
+        // SYNTHESIZED CYBER AUDIO ENGINE
+        // ==========================================
+        class SoundFX {
+          constructor() {
+            this.ctx = null;
+            this.muted = false;
+          }
+
+          init() {
+            if (!this.ctx) {
+              const AudioCtx = window.AudioContext || window.webkitAudioContext;
+              if (AudioCtx) {
+                this.ctx = new AudioCtx();
+              }
+            }
+            if (this.ctx && this.ctx.state === 'suspended') {
+              this.ctx.resume();
+            }
+          }
+
+          toggle() {
+            this.muted = !this.muted;
+            return !this.muted;
+          }
+
+          // Energetic neon bounce sound
+          bounce(speedRatio = 1) {
+            if (this.muted || !this.ctx) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'sine';
+            const baseFreq = Math.min(650, 320 + speedRatio * 40);
+            osc.frequency.setValueAtTime(baseFreq, now);
+            osc.frequency.exponentialRampToValueAtTime(baseFreq * 2.2, now + 0.12);
+
+            gain.gain.setValueAtTime(0.25, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.14);
+          }
+
+          // Line drawn placement pop
+          placeLine() {
+            if (this.muted || !this.ctx) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(420, now);
+            osc.frequency.exponentialRampToValueAtTime(840, now + 0.08);
+
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.08);
+          }
+
+          // Green orb collect chord
+          collectOrb() {
+            if (this.muted || !this.ctx) return;
+            const notes = [523.25, 659.25, 783.99, 1046.5]; // C E G C
+            const now = this.ctx.currentTime;
+            notes.forEach((freq, idx) => {
+              const osc = this.ctx.createOscillator();
+              const gain = this.ctx.createGain();
+
+              osc.type = 'sine';
+              osc.frequency.setValueAtTime(freq, now + idx * 0.04);
+
+              gain.gain.setValueAtTime(0.18, now + idx * 0.04);
+              gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.04 + 0.22);
+
+              osc.connect(gain);
+              gain.connect(this.ctx.destination);
+
+              osc.start(now + idx * 0.04);
+              osc.stop(now + idx * 0.04 + 0.22);
+            });
+          }
+
+          // Virus crash / Game Over explosion
+          crash() {
+            if (this.muted || !this.ctx) return;
+            const now = this.ctx.currentTime;
+            const dur = 0.6;
+
+            const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+            const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+              data[i] = Math.random() * 2 - 1;
+            }
+
+            const noise = this.ctx.createBufferSource();
+            noise.buffer = buffer;
+
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(450, now);
+            filter.frequency.exponentialRampToValueAtTime(40, now + dur);
+
+            const gain = this.ctx.createGain();
+            gain.gain.setValueAtTime(0.4, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            noise.start(now);
+          }
+        }
+
+        const audio = new SoundFX();
+
+        // ==========================================
+        // CANVAS & RESPONSIVE SETUP
+        // ==========================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let width = (canvas.width = window.innerWidth);
+        let height = (canvas.height = window.innerHeight);
+
+        function handleResize() {
+          width = canvas.width = window.innerWidth;
+          height = canvas.height = window.innerHeight;
+          if (ball && state === GameState.START) {
+            ball.x = width / 2;
+            ball.y = 80;
+          }
+        }
+        window.addEventListener('resize', handleResize);
+
+        // ==========================================
+        // CONSTANTS & GAME BALANCE
+        // ==========================================
+        const BALL_RADIUS = 14;
+        const INITIAL_GRAVITY = 0.28;
+        const BOUNCE_RESTITUTION = 1.05; // Energetic trampoline bounce
+        const MIN_BOUNCE_SPEED = 6.0;    // Ensures bounce is always exciting
+        const MAX_BOUNCE_SPEED = 18.0;   // Velocity cap
+        const MAX_LINE_LENGTH = 190;     // Prevents full-screen cheese lines
+        const MIN_LINE_LENGTH = 18;      // Filter tiny accidental taps
+        const LINE_THICKNESS = 6;
+        const MAX_ACTIVE_LINES = 7;      // Up to 7 drawn lines at once
+
+        const GameState = {
+          START: 'START',
+          PLAYING: 'PLAYING',
+          GAMEOVER: 'GAMEOVER'
+        };
+
+        let state = GameState.START;
+        let paused = false;
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('neon_ink_high') || '0', 10);
+        let combo = 0;
+        let maxCombo = 0;
+
+        // ==========================================
+        // GAME ENTITIES
+        // ==========================================
+
+        // The Cyan Player Ball
+        class PlayerBall {
+          constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.r = BALL_RADIUS;
+            this.vx = 0;
+            this.vy = 0;
+            this.trail = [];
+            this.maxTrail = 16;
+            this.pulse = 0;
+          }
+
+          reset(x, y) {
+            this.x = x;
+            this.y = y;
+            this.vx = (Math.random() - 0.5) * 1.5;
+            this.vy = 0;
+            this.trail = [];
+            this.pulse = 0;
+          }
+
+          update(gravity) {
+            this.vy += gravity;
+
+            // Update trail
+            this.trail.unshift({ x: this.x, y: this.y });
+            if (this.trail.length > this.maxTrail) {
+              this.trail.pop();
+            }
+
+            // Move
+            this.x += this.vx;
+            this.y += this.vy;
+
+            // Ceiling bumper
+            if (this.y - this.r < 0) {
+              this.y = this.r;
+              this.vy = Math.abs(this.vy) * 0.7;
+            }
+
+            // Left & Right screen bounce
+            if (this.x - this.r < 0) {
+              this.x = this.r;
+              this.vx = Math.abs(this.vx) * 0.85;
+              spawnSparks(this.x, this.y, '#00f0ff', 6);
+              audio.bounce(1);
+            } else if (this.x + this.r > width) {
+              this.x = width - this.r;
+              this.vx = -Math.abs(this.vx) * 0.85;
+              spawnSparks(this.x, this.y, '#00f0ff', 6);
+              audio.bounce(1);
+            }
+
+            this.pulse += 0.08;
+          }
+
+          draw(ctx) {
+            // Neon Ribbon Trail
+            for (let i = 0; i < this.trail.length; i++) {
+              const pt = this.trail[i];
+              const ratio = 1 - i / this.trail.length;
+              const trailRadius = this.r * ratio * 0.75;
+
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(pt.x, pt.y, Math.max(1, trailRadius), 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(0, 240, 255, ${ratio * 0.35})`;
+              ctx.shadowColor = '#00f0ff';
+              ctx.shadowBlur = 8 * ratio;
+              ctx.fill();
+              ctx.restore();
+            }
+
+            // Ball Body & Glow
+            ctx.save();
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 18 + Math.sin(this.pulse) * 4;
+
+            // Outer cyan glow layer
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+            ctx.fillStyle = '#00f0ff';
+            ctx.fill();
+
+            // Inner hot white core
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.r * 0.55, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 6;
+            ctx.fill();
+
+            ctx.restore();
+          }
+        }
+
+        // Fragile Drawn Platform (Pink Neon)
+        class PlatformLine {
+          constructor(x1, y1, x2, y2) {
+            this.x1 = x1;
+            this.y1 = y1;
+            this.x2 = x2;
+            this.y2 = y2;
+            this.thickness = LINE_THICKNESS;
+            this.dead = false;
+            this.life = 1.0;
+            this.alpha = 1.0;
+          }
+
+          draw(ctx) {
+            ctx.save();
+            ctx.strokeStyle = `rgba(255, 0, 127, ${this.alpha})`;
+            ctx.lineWidth = this.thickness;
+            ctx.lineCap = 'round';
+            ctx.shadowColor = '#ff007f';
+            ctx.shadowBlur = 15;
+
+            // Base neon glow
+            ctx.beginPath();
+            ctx.moveTo(this.x1, this.y1);
+            ctx.lineTo(this.x2, this.y2);
+            ctx.stroke();
+
+            // Inner bright core
+            ctx.strokeStyle = `rgba(255, 230, 245, ${this.alpha * 0.9})`;
+            ctx.lineWidth = this.thickness * 0.4;
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            ctx.moveTo(this.x1, this.y1);
+            ctx.lineTo(this.x2, this.y2);
+            ctx.stroke();
+
+            // End cap dots
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(this.x1, this.y1, 2.5, 0, Math.PI * 2);
+            ctx.arc(this.x2, this.y2, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+          }
+        }
+
+        // Red Virus Obstacle
+        class VirusObstacle {
+          constructor(y, speed, direction = 1) {
+            this.r = 18;
+            this.y = y;
+            this.dir = direction; // 1: moving right, -1: moving left
+            this.speed = speed;
+            this.x = this.dir === 1 ? -this.r * 2 : width + this.r * 2;
+            this.rot = 0;
+            this.rotSpeed = (Math.random() * 0.04 + 0.02) * this.dir;
+            this.spikes = 8;
+            this.pulse = Math.random() * Math.PI * 2;
+          }
+
+          update() {
+            this.x += this.speed * this.dir;
+            this.rot += this.rotSpeed;
+            this.pulse += 0.06;
+
+            // Wrap or reposition once fully offscreen
+            if (this.dir === 1 && this.x > width + this.r * 3) {
+              this.x = -this.r * 2;
+              this.y = Math.random() * (height * 0.65) + height * 0.18;
+            } else if (this.dir === -1 && this.x < -this.r * 3) {
+              this.x = width + this.r * 2;
+              this.y = Math.random() * (height * 0.65) + height * 0.18;
+            }
+          }
+
+          draw(ctx) {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.rot);
+
+            const pulseOffset = Math.sin(this.pulse) * 3;
+            const currentR = this.r + pulseOffset;
+
+            ctx.strokeStyle = '#ff073a';
+            ctx.fillStyle = 'rgba(255, 7, 58, 0.2)';
+            ctx.lineWidth = 2.5;
+            ctx.shadowColor = '#ff073a';
+            ctx.shadowBlur = 16;
+
+            // Spiked jagged bio-virus shape
+            ctx.beginPath();
+            for (let i = 0; i < this.spikes; i++) {
+              const a = (i * 2 * Math.PI) / this.spikes;
+              const nextA = ((i + 0.5) * 2 * Math.PI) / this.spikes;
+
+              const px1 = Math.cos(a) * (currentR + 8);
+              const py1 = Math.sin(a) * (currentR + 8);
+
+              const px2 = Math.cos(nextA) * (currentR * 0.65);
+              const py2 = Math.sin(nextA) * (currentR * 0.65);
+
+              if (i === 0) ctx.moveTo(px1, py1);
+              else ctx.lineTo(px1, py1);
+
+              ctx.lineTo(px2, py2);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Glowing central menacing eye
+            ctx.beginPath();
+            ctx.arc(0, 0, currentR * 0.45, 0, Math.PI * 2);
+            ctx.fillStyle = '#ff073a';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(0, 0, currentR * 0.2, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            ctx.restore();
+          }
+        }
+
+        // Green Energy Star Collectible
+        class EnergyOrb {
+          constructor() {
+            this.r = 15;
+            this.respawn();
+            this.rot = 0;
+            this.pulse = 0;
+          }
+
+          respawn() {
+            // Keep safe distance from screen borders
+            this.x = Math.random() * (width - 160) + 80;
+            this.y = Math.random() * (height * 0.65) + 100;
+          }
+
+          update() {
+            this.rot += 0.035;
+            this.pulse += 0.08;
+          }
+
+          draw(ctx) {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.rot);
+
+            const scale = 1 + Math.sin(this.pulse) * 0.15;
+            ctx.scale(scale, scale);
+
+            ctx.shadowColor = '#39ff14';
+            ctx.shadowBlur = 18;
+
+            // Rotating 4-pointed neon star diamond
+            ctx.strokeStyle = '#39ff14';
+            ctx.fillStyle = 'rgba(57, 255, 20, 0.25)';
+            ctx.lineWidth = 2.5;
+
+            ctx.beginPath();
+            const arm = this.r * 1.3;
+            const inner = this.r * 0.45;
+            for (let i = 0; i < 4; i++) {
+              const a = (i * Math.PI) / 2;
+              const innerA = a + Math.PI / 4;
+              const ox = Math.cos(a) * arm;
+              const oy = Math.sin(a) * arm;
+              const ix = Math.cos(innerA) * inner;
+              const iy = Math.sin(innerA) * inner;
+
+              if (i === 0) ctx.moveTo(ox, oy);
+              else ctx.lineTo(ox, oy);
+              ctx.lineTo(ix, iy);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Center glowing core
+            ctx.beginPath();
+            ctx.arc(0, 0, this.r * 0.35, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+
+            ctx.restore();
+          }
+        }
+
+        // Particle sparks for bounces, destroys, and collects
+        class NeonParticle {
+          constructor(x, y, color, speedMultiplier = 1) {
+            this.x = x;
+            this.y = y;
+            this.color = color;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = (Math.random() * 4 + 1.5) * speedMultiplier;
+            this.vx = Math.cos(angle) * speed;
+            this.vy = Math.sin(angle) * speed;
+            this.life = 1.0;
+            this.decay = Math.random() * 0.03 + 0.02;
+            this.size = Math.random() * 3 + 2;
+          }
+
+          update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vx *= 0.96;
+            this.vy *= 0.96;
+            this.life -= this.decay;
+          }
+
+          draw(ctx) {
+            if (this.life <= 0) return;
+            ctx.save();
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = Math.max(0, this.life);
+            ctx.shadowColor = this.color;
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+
+        // Floating +10 Popups
+        class FloatingText {
+          constructor(x, y, text, color) {
+            this.x = x;
+            this.y = y;
+            this.text = text;
+            this.color = color;
+            this.life = 1.0;
+            this.vy = -1.5;
+          }
+
+          update() {
+            this.y += this.vy;
+            this.life -= 0.025;
+          }
+
+          draw(ctx) {
+            if (this.life <= 0) return;
+            ctx.save();
+            ctx.font = 'bold 20px "Courier New", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = Math.max(0, this.life);
+            ctx.shadowColor = this.color;
+            ctx.shadowBlur = 10;
+            ctx.fillText(this.text, this.x, this.y);
+            ctx.restore();
+          }
+        }
+
+        // ==========================================
+        // GAME STATE & COLLECTIONS
+        // ==========================================
+        let ball = new PlayerBall(width / 2, 80);
+        let platforms = [];
+        let viruses = [];
+        let orb = new EnergyOrb();
+        let particles = [];
+        let floatingTexts = [];
+
+        // Mouse / Touch drawing state
+        let isDrawing = false;
+        let drawStart = { x: 0, y: 0 };
+        let drawCurrent = { x: 0, y: 0 };
+
+        function spawnSparks(x, y, color, count, speed = 1) {
+          for (let i = 0; i < count; i++) {
+            particles.push(new NeonParticle(x, y, color, speed));
+          }
+        }
+
+        function initObstacles(levelScore = 0) {
+          viruses = [];
+          // Scale count with score: 2 up to 5
+          const count = Math.min(6, 2 + Math.floor(levelScore / 50));
+          const baseSpeed = 1.4 + Math.min(2.5, levelScore * 0.015);
+
+          const stepY = (height * 0.65) / count;
+          for (let i = 0; i < count; i++) {
+            const y = height * 0.18 + i * stepY + (Math.random() * 20 - 10);
+            const dir = i % 2 === 0 ? 1 : -1;
+            const speed = baseSpeed + Math.random() * 0.8;
+            viruses.push(new VirusObstacle(y, speed, dir));
+          }
+        }
+
+        function restartGame() {
+          score = 0;
+          combo = 0;
+          platforms = [];
+          particles = [];
+          floatingTexts = [];
+          ball.reset(width / 2, 80);
+          orb.respawn();
+          initObstacles(0);
+          state = GameState.PLAYING;
+        }
+
+        // ==========================================
+        // PHYSICS: CIRCLE TO LINE SEGMENT COLLISION
+        // ==========================================
+        function checkCircleLineCollision(ball, line) {
+          const x1 = line.x1;
+          const y1 = line.y1;
+          const x2 = line.x2;
+          const y2 = line.y2;
+
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          const lenSq = dx * dx + dy * dy;
+          if (lenSq === 0) return false;
+
+          // Project ball center onto line segment: t = [(B - A) . (P - A)] / |B - A|^2
+          let t = ((ball.x - x1) * dx + (ball.y - y1) * dy) / lenSq;
+          t = Math.max(0, Math.min(1, t)); // Clamp to segment
+
+          // Closest point on segment
+          const cx = x1 + t * dx;
+          const cy = y1 + t * dy;
+
+          // Distance from ball to closest point
+          const distX = ball.x - cx;
+          const distY = ball.y - cy;
+          const distSq = distX * distX + distY * distY;
+
+          const totalRadius = ball.r + line.thickness / 2;
+
+          if (distSq <= totalRadius * totalRadius) {
+            const dist = Math.sqrt(distSq) || 0.001;
+
+            // Normal vector pointing away from line towards ball
+            let nx = distX / dist;
+            let ny = distY / dist;
+
+            // If normal points into line (overlap), derive standard perpendicular
+            const lineNormX = -dy / Math.sqrt(lenSq);
+            const lineNormY = dx / Math.sqrt(lenSq);
+
+            // Align normal with bounce direction
+            if (nx * lineNormX + ny * lineNormY < 0) {
+              nx = -lineNormX;
+              ny = -lineNormY;
+            }
+
+            // Normal velocity component
+            const dot = ball.vx * nx + ball.vy * ny;
+
+            // Only bounce if ball is heading towards the surface
+            if (dot < 0) {
+              // Elastic reflection: v' = v - (1 + e) * (v . n) * n
+              const bounceFactor = 1 + BOUNCE_RESTITUTION;
+              let newVx = ball.vx - bounceFactor * dot * nx;
+              let newVy = ball.vy - bounceFactor * dot * ny;
+
+              // Ensure snappy energetic launch
+              const speed = Math.hypot(newVx, newVy);
+              if (speed < MIN_BOUNCE_SPEED) {
+                const boost = MIN_BOUNCE_SPEED / (speed || 1);
+                newVx *= boost;
+                newVy *= boost;
+              } else if (speed > MAX_BOUNCE_SPEED) {
+                const damp = MAX_BOUNCE_SPEED / speed;
+                newVx *= damp;
+                newVy *= damp;
+              }
+
+              // Extra upward launch bias if bouncing off horizontal/angled ramps
+              if (newVy > -2.5) {
+                newVy -= 3.0;
+              }
+
+              ball.vx = newVx;
+              ball.vy = newVy;
+
+              // Separate ball cleanly from the line to avoid multi-frame sticking
+              ball.x = cx + nx * (totalRadius + 2);
+              ball.y = cy + ny * (totalRadius + 2);
+
+              return true;
+            }
+          }
+
+          return false;
+        }
+
+        // ==========================================
+        // INPUT CONTROLS (MOUSE & TOUCH)
+        // ==========================================
+        function getPointerPos(e) {
+          const rect = canvas.getBoundingClientRect();
+          let clientX, clientY;
+          if (e.touches && e.touches.length > 0) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+          } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+          }
+          return {
+            x: clientX - rect.left,
+            y: clientY - rect.top
+          };
+        }
+
+        function onPointerDown(e) {
+          audio.init();
+
+          if (state === GameState.START || state === GameState.GAMEOVER) {
+            restartGame();
+            return;
+          }
+
+          if (paused) {
+            paused = false;
+            document.getElementById('pauseBtn').textContent = 'PAUSE';
+            return;
+          }
+
+          const pos = getPointerPos(e);
+          isDrawing = true;
+          drawStart = { x: pos.x, y: pos.y };
+          drawCurrent = { x: pos.x, y: pos.y };
+        }
+
+        function onPointerMove(e) {
+          if (!isDrawing) return;
+          const pos = getPointerPos(e);
+
+          // Constrain length to MAX_LINE_LENGTH
+          const dx = pos.x - drawStart.x;
+          const dy = pos.y - drawStart.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist > MAX_LINE_LENGTH) {
+            drawCurrent.x = drawStart.x + (dx / dist) * MAX_LINE_LENGTH;
+            drawCurrent.y = drawStart.y + (dy / dist) * MAX_LINE_LENGTH;
+          } else {
+            drawCurrent = { x: pos.x, y: pos.y };
+          }
+        }
+
+        function onPointerUp() {
+          if (!isDrawing) return;
+          isDrawing = false;
+
+          const dx = drawCurrent.x - drawStart.x;
+          const dy = drawCurrent.y - drawStart.y;
+          const dist = Math.hypot(dx, dy);
+
+          // Only create solid platform if it meets minimum drag threshold
+          if (dist >= MIN_LINE_LENGTH) {
+            // Cap max active platforms to maintain challenge and clarity
+            if (platforms.length >= MAX_ACTIVE_LINES) {
+              const old = platforms.shift();
+              spawnSparks((old.x1 + old.x2) / 2, (old.y1 + old.y2) / 2, '#ff007f', 4);
+            }
+
+            platforms.push(new PlatformLine(drawStart.x, drawStart.y, drawCurrent.x, drawCurrent.y));
+            audio.placeLine();
+            spawnSparks(drawCurrent.x, drawCurrent.y, '#ff007f', 5);
+          }
+        }
+
+        // Pointer event listeners
+        canvas.addEventListener('mousedown', onPointerDown);
+        window.addEventListener('mousemove', onPointerMove);
+        window.addEventListener('mouseup', onPointerUp);
+
+        canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+        window.addEventListener('touchmove', onPointerMove, { passive: false });
+        window.addEventListener('touchend', onPointerUp, { passive: false });
+
+        // HUD Buttons
+        const soundBtn = document.getElementById('soundBtn');
+        soundBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          audio.init();
+          const on = audio.toggle();
+          soundBtn.textContent = on ? 'AUDIO: ON' : 'AUDIO: OFF';
+          soundBtn.blur();
+        });
+
+        const pauseBtn = document.getElementById('pauseBtn');
+        pauseBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (state === GameState.PLAYING) {
+            paused = !paused;
+            pauseBtn.textContent = paused ? 'RESUME' : 'PAUSE';
+          }
+          pauseBtn.blur();
+        });
+
+        // Keyboard hotkeys
+        window.addEventListener('keydown', (e) => {
+          if (e.code === 'Space' || e.code === 'KeyP') {
+            if (state === GameState.PLAYING) {
+              paused = !paused;
+              pauseBtn.textContent = paused ? 'RESUME' : 'PAUSE';
+            } else if (state === GameState.START || state === GameState.GAMEOVER) {
+              restartGame();
+            }
+          }
+        });
+
+        // ==========================================
+        // MAIN UPDATE & COLLISION CHECK
+        // ==========================================
+        function updateGame() {
+          // Dynamic difficulty scaling
+          const currentGravity = INITIAL_GRAVITY + Math.min(0.2, score * 0.001);
+
+          ball.update(currentGravity);
+
+          // 1. Check Fragile Platform Bounces
+          for (let i = platforms.length - 1; i >= 0; i--) {
+            const line = platforms[i];
+            if (checkCircleLineCollision(ball, line)) {
+              // FRAGILE LINE MECHANIC: Line MUST disappear upon collision!
+              platforms.splice(i, 1);
+              combo++;
+              if (combo > maxCombo) maxCombo = combo;
+
+              audio.bounce(Math.hypot(ball.vx, ball.vy) / 6);
+              spawnSparks(ball.x, ball.y, '#ff007f', 16, 1.4);
+
+              // Floating combo text
+              if (combo > 1) {
+                floatingTexts.push(new FloatingText(ball.x, ball.y - 15, `${combo}x COMBO!`, '#ff007f'));
+              }
+              break;
+            }
+          }
+
+          // 2. Check Green Energy Orb Collect
+          orb.update();
+          const distToOrb = Math.hypot(ball.x - orb.x, ball.y - orb.y);
+          if (distToOrb < ball.r + orb.r) {
+            score += 10;
+            if (score > highScore) {
+              highScore = score;
+              localStorage.setItem('neon_ink_high', highScore.toString());
+            }
+
+            audio.collectOrb();
+            spawnSparks(orb.x, orb.y, '#39ff14', 22, 1.6);
+            floatingTexts.push(new FloatingText(orb.x, orb.y - 12, '+10', '#39ff14'));
+
+            // Minor energetic bounce boost on orb collection
+            ball.vy = -Math.max(7.5, Math.abs(ball.vy) * 0.9);
+
+            orb.respawn();
+
+            // Spawn additional viruses or update speeds when reaching milestones
+            if (score % 40 === 0) {
+              initObstacles(score);
+            }
+          }
+
+          // 3. Check Red Virus Obstacle Collisions
+          for (let i = 0; i < viruses.length; i++) {
+            const v = viruses[i];
+            v.update();
+
+            const distToVirus = Math.hypot(ball.x - v.x, ball.y - v.y);
+            if (distToVirus < ball.r + v.r - 2) {
+              // Game Over via Virus
+              audio.crash();
+              spawnSparks(ball.x, ball.y, '#ff073a', 35, 2.2);
+              state = GameState.GAMEOVER;
+              return;
+            }
+          }
+
+          // 4. Abyss Death (Fell off bottom of screen)
+          if (ball.y - ball.r > height) {
+            audio.crash();
+            spawnSparks(ball.x, height - 10, '#00f0ff', 25, 2.0);
+            state = GameState.GAMEOVER;
+            return;
+          }
+
+          // 5. Update Particles & Popups
+          for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            if (particles[i].life <= 0) particles.splice(i, 1);
+          }
+          for (let i = floatingTexts.length - 1; i >= 0; i--) {
+            floatingTexts[i].update();
+            if (floatingTexts[i].life <= 0) floatingTexts.splice(i, 1);
+          }
+        }
+
+        // ==========================================
+        // RENDERING & HUD
+        // ==========================================
+        function drawCyberGrid(ctx) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(0, 240, 255, 0.035)';
+          ctx.lineWidth = 1;
+
+          const gridSize = 45;
+          for (let x = 0; x < width; x += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+          }
+          for (let y = 0; y < height; y += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+          }
+
+          // Bottom death boundary danger line
+          ctx.strokeStyle = 'rgba(255, 7, 58, 0.35)';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = '#ff073a';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.moveTo(0, height - 4);
+          ctx.lineTo(width, height - 4);
+          ctx.stroke();
+
+          ctx.restore();
+        }
+
+        function drawActiveDragLine(ctx) {
+          if (!isDrawing) return;
+
+          const dx = drawCurrent.x - drawStart.x;
+          const dy = drawCurrent.y - drawStart.y;
+          const dist = Math.hypot(dx, dy);
+
+          const isMax = dist >= MAX_LINE_LENGTH;
+          const lineColor = isMax ? '#ff003c' : '#ff007f';
+
+          ctx.save();
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = LINE_THICKNESS;
+          ctx.lineCap = 'round';
+          ctx.shadowColor = lineColor;
+          ctx.shadowBlur = 14;
+
+          // Drag line path
+          ctx.beginPath();
+          ctx.moveTo(drawStart.x, drawStart.y);
+          ctx.lineTo(drawCurrent.x, drawCurrent.y);
+          ctx.stroke();
+
+          // Normal direction indicator arrow
+          if (dist > 30) {
+            const midX = (drawStart.x + drawCurrent.x) / 2;
+            const midY = (drawStart.y + drawCurrent.y) / 2;
+            const nx = -dy / dist;
+            const ny = dx / dist;
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(midX, midY);
+            ctx.lineTo(midX + nx * 18, midY + ny * 18);
+            ctx.stroke();
+          }
+
+          // Length gauge indicator
+          ctx.fillStyle = lineColor;
+          ctx.font = '11px "Courier New", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${Math.round((dist / MAX_LINE_LENGTH) * 100)}% INK`, drawCurrent.x, drawCurrent.y - 12);
+
+          ctx.restore();
+        }
+
+        function drawHUD(ctx) {
+          ctx.save();
+
+          // Score (Top Left)
+          ctx.textAlign = 'left';
+          ctx.font = 'bold 28px "Courier New", monospace';
+          ctx.fillStyle = '#39ff14';
+          ctx.shadowColor = '#39ff14';
+          ctx.shadowBlur = 12;
+          ctx.fillText(`SCORE: ${score}`, 24, 46);
+
+          // High Score
+          ctx.font = 'bold 15px "Courier New", monospace';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+          ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+          ctx.shadowBlur = 6;
+          ctx.fillText(`HIGH: ${highScore}`, 24, 74);
+
+          // Active Ink Lines indicator
+          ctx.textAlign = 'left';
+          ctx.font = '12px "Courier New", monospace';
+          ctx.fillStyle = '#ff007f';
+          ctx.shadowColor = '#ff007f';
+          ctx.shadowBlur = 8;
+          ctx.fillText(`INK PLATFORMS: ${platforms.length} / ${MAX_ACTIVE_LINES}`, 24, 98);
+
+          ctx.restore();
+        }
+
+        function drawStartOverlay(ctx) {
+          ctx.save();
+          ctx.textAlign = 'center';
+
+          // Glowing Title
+          ctx.font = 'bold 64px "Courier New", monospace';
+          ctx.fillStyle = '#00f0ff';
+          ctx.shadowColor = '#00f0ff';
+          ctx.shadowBlur = 24;
+          ctx.fillText('NEON INK', width / 2, height / 2 - 90);
+
+          // Subtitle
+          ctx.font = 'bold 20px "Courier New", monospace';
+          ctx.fillStyle = '#ff007f';
+          ctx.shadowColor = '#ff007f';
+          ctx.shadowBlur = 14;
+          ctx.fillText('DRAW TO BOUNCE &bull; EVADE VIRUSES &bull; HARVEST ENERGY', width / 2, height / 2 - 35);
+
+          // Call to Action
+          const pulse = Math.sin(Date.now() * 0.005) * 4;
+          ctx.font = 'bold 22px "Courier New", monospace';
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = '#39ff14';
+          ctx.shadowBlur = 12 + pulse;
+          ctx.fillText('[ CLICK OR TAP TO LAUNCH ]', width / 2, height / 2 + 35);
+
+          // Instructions box
+          ctx.font = '14px "Courier New", monospace';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+          ctx.shadowBlur = 4;
+          ctx.fillText('1. Click and drag to create bouncy pink neon ramps', width / 2, height / 2 + 90);
+          ctx.fillText('2. Each ramp breaks after 1 bounce — keep drawing!', width / 2, height / 2 + 115);
+          ctx.fillText('3. Dodge red spiked viruses & keep ball from abyss', width / 2, height / 2 + 140);
+
+          ctx.restore();
+        }
+
+        function drawGameOverOverlay(ctx) {
+          ctx.save();
+          ctx.textAlign = 'center';
+
+          // Dark vignette backdrop
+          ctx.fillStyle = 'rgba(11, 12, 16, 0.75)';
+          ctx.fillRect(0, 0, width, height);
+
+          // Game Over Title
+          ctx.font = 'bold 60px "Courier New", monospace';
+          ctx.fillStyle = '#ff073a';
+          ctx.shadowColor = '#ff073a';
+          ctx.shadowBlur = 25;
+          ctx.fillText('GAME OVER', width / 2, height / 2 - 70);
+
+          // Final Stats
+          ctx.font = 'bold 26px "Courier New", monospace';
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = '#39ff14';
+          ctx.shadowBlur = 12;
+          ctx.fillText(`FINAL SCORE: ${score}`, width / 2, height / 2 - 10);
+
+          if (score >= highScore && score > 0) {
+            ctx.font = 'bold 18px "Courier New", monospace';
+            ctx.fillStyle = '#39ff14';
+            ctx.shadowBlur = 10;
+            ctx.fillText('★ NEW RECORD ESTABLISHED ★', width / 2, height / 2 + 25);
+          }
+
+          // Restart prompt
+          const pulse = Math.sin(Date.now() * 0.006) * 5;
+          ctx.font = 'bold 22px "Courier New", monospace';
+          ctx.fillStyle = '#00f0ff';
+          ctx.shadowColor = '#00f0ff';
+          ctx.shadowBlur = 12 + pulse;
+          ctx.fillText('[ CLICK TO RESTART ]', width / 2, height / 2 + 80);
+
+          ctx.restore();
+        }
+
+        function drawPauseOverlay(ctx) {
+          ctx.save();
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(11, 12, 16, 0.6)';
+          ctx.fillRect(0, 0, width, height);
+
+          ctx.font = 'bold 50px "Courier New", monospace';
+          ctx.fillStyle = '#ff007f';
+          ctx.shadowColor = '#ff007f';
+          ctx.shadowBlur = 20;
+          ctx.fillText('PAUSED', width / 2, height / 2);
+          ctx.restore();
+        }
+
+        // ==========================================
+        // MAIN GAME LOOP (requestAnimationFrame)
+        // ==========================================
+        function loop() {
+          requestAnimationFrame(loop);
+
+          // Clean frame clear
+          ctx.fillStyle = '#0b0c10';
+          ctx.fillRect(0, 0, width, height);
+
+          // Background Grid
+          drawCyberGrid(ctx);
+
+          if (state === GameState.PLAYING && !paused) {
+            updateGame();
+          }
+
+          // Render Platforms
+          for (let i = 0; i < platforms.length; i++) {
+            platforms[i].draw(ctx);
+          }
+
+          // Render Active Drag Line
+          drawActiveDragLine(ctx);
+
+          // Render Collectible Energy Orb
+          orb.draw(ctx);
+
+          // Render Viruses
+          for (let i = 0; i < viruses.length; i++) {
+            viruses[i].draw(ctx);
+          }
+
+          // Render Ball
+          ball.draw(ctx);
+
+          // Render Particles
+          for (let i = 0; i < particles.length; i++) {
+            particles[i].draw(ctx);
+          }
+
+          // Render Floating Texts
+          for (let i = 0; i < floatingTexts.length; i++) {
+            floatingTexts[i].draw(ctx);
+          }
+
+          // Render HUD
+          drawHUD(ctx);
+
+          // Render Overlays
+          if (state === GameState.START) {
+            drawStartOverlay(ctx);
+          } else if (state === GameState.GAMEOVER) {
+            drawGameOverOverlay(ctx);
+          } else if (paused) {
+            drawPauseOverlay(ctx);
+          }
+        }
+
+        // Initialize entities and launch 60fps loop
+        initObstacles(0);
+        requestAnimationFrame(loop);
+      })();
+    </script>
+  </body>
+</html>

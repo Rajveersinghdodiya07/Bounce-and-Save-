@@ -1,0 +1,6 @@
+{
+  "name": "Classic Minesweeper",
+  "description": "Classic retro Windows-style Minesweeper game built in pure HTML5, CSS, and JavaScript with 3D beveled tiles, recursive flood-fill, and sound effects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
